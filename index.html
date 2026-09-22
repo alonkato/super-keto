@@ -77,6 +77,7 @@
   header{padding:26px 20px 18px; position:relative;}
   .brand{display:flex; align-items:center; justify-content:space-between; gap:12px;}
   .brand-left{display:flex; align-items:center; gap:10px; min-width:0;}
+  .brand-right{display:flex; align-items:center; gap:8px; flex-shrink:0;}
   .brand-logo{width:46px; height:46px; object-fit:contain; flex-shrink:0; display:block;}
   .brand-text h1{font-size:26px; font-weight:800; color:var(--navy); letter-spacing:-0.4px;}
   .brand-text p{margin:2px 0 0; font-size:13px; color:var(--text-dim);}
@@ -89,6 +90,14 @@
     font-size:12px; font-weight:700; color:#FFFFFF; flex-shrink:0;
   }
   .me-badge span{font-size:13px; font-weight:600;}
+
+  .header-backup-row{display:flex; gap:6px; flex-shrink:0;}
+  .header-backup-btn{
+    width:34px; height:34px; border-radius:50%; background:var(--card); border:1px solid var(--border);
+    color:var(--text-dim); display:flex; align-items:center; justify-content:center; flex-shrink:0;
+    box-shadow:0 1px 3px rgba(30,78,110,0.08);
+  }
+  .header-backup-btn svg{width:16px; height:16px;}
 
   .underline-swirl{width:120px; height:8px; margin-top:10px; opacity:0.9;}
 
@@ -411,10 +420,16 @@
         <p>רשימת הקניות של משפחת קטוביץ</p>
       </div>
     </div>
-    <button class="me-badge" id="me-badge">
-      <span id="me-name">—</span>
-      <span class="avatar" id="me-avatar"></span>
-    </button>
+    <div class="brand-right">
+      <button class="me-badge" id="me-badge">
+        <span id="me-name">—</span>
+        <span class="avatar" id="me-avatar"></span>
+      </button>
+      <div class="header-backup-row">
+        <button class="header-backup-btn" id="save-backup-btn" title="שמירת רשימת פריטים"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button class="header-backup-btn" id="load-backup-btn" title="שחזור רשימת פריטים"><svg viewBox="0 0 24 24" fill="none"><path d="M12 21V9m0 0l-4 4m4-4l4 4M5 3h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+    </div>
   </div>
   <svg class="underline-swirl" viewBox="0 0 120 8" fill="none">
     <path d="M2 5c8-6 14 4 22-1s14-6 22-1 14 4 22-1 14-4 22 1 14 4 22-1" stroke="#F0913E" stroke-width="2.4" stroke-linecap="round"/>
@@ -479,11 +494,12 @@
     <button class="refresh-btn" id="refresh-btn"><svg viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
   <div class="backup-row">
-    <button class="backup-btn" id="save-backup-btn">שמירת גיבוי</button>
-    <button class="backup-btn" id="load-backup-btn">טעינת גיבוי</button>
+    <button class="backup-btn" id="save-quick-btn">שמירת רשימה עדכנית</button>
+    <button class="backup-btn" id="restore-quick-btn">שחזור רשימה עדכנית</button>
   </div>
-  <input type="file" id="backup-file-input" accept="application/json" style="display:none">
 </div>
+
+<input type="file" id="backup-file-input" accept="application/json" style="display:none">
 
 <div class="modal-backdrop" id="special-modal-backdrop"></div>
 <div class="modal" id="special-modal">
@@ -533,7 +549,7 @@
 
 <div class="toast" id="toast"></div>
 
-<input type="file" id="photo-file-input" accept="image/*" capture="environment" style="display:none">
+<input type="file" id="photo-file-input" accept="image/*" style="display:none">
 <div class="photo-lightbox" id="photo-lightbox">
   <img id="photo-lightbox-img" src="" alt="תמונת מוצר">
   <div class="photo-lightbox-actions">
@@ -611,7 +627,6 @@
     editingProduct: null, // {id, catKey}
     pendingConfirmAction: null,
     finalUndoStack: [],
-    finalListBaseline: {}, // listId -> {pid: true, ...} — items seen since baseline was captured
     pendingPhotoTarget: null
   };
 
@@ -783,7 +798,6 @@
         async function(){
           state.data = normalizeData(parsed);
           state.finalUndoStack = [];
-          state.finalListBaseline = {};
           await saveShared();
           renderAll();
           showToast('הנתונים שוחזרו בהצלחה');
@@ -791,6 +805,51 @@
       );
     };
     reader.readAsText(file);
+  }
+
+  // ---------- quick local snapshot (one-tap, no file dialogs) ----------
+  var QUICK_SNAPSHOT_KEY = 'super-keto-quicksave';
+
+  function formatDateTime(ts){
+    var d = new Date(ts);
+    var pad = function(n){ return n < 10 ? '0' + n : '' + n; };
+    return pad(d.getDate()) + '/' + pad(d.getMonth()+1) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  async function saveQuickSnapshot(){
+    try{
+      var payload = JSON.stringify({ catalog: state.data.catalog, lists: state.data.lists, savedAt: Date.now() });
+      localStorage.setItem(QUICK_SNAPSHOT_KEY, payload);
+      showToast('נשמר גיבוי מהיר של הרשימה');
+    } catch(e){
+      console.error(e);
+      showToast('לא הצלחנו לשמור');
+    }
+  }
+
+  async function restoreQuickSnapshot(){
+    var raw;
+    try{ raw = localStorage.getItem(QUICK_SNAPSHOT_KEY); } catch(e){}
+    if (!raw){
+      showToast('אין גיבוי מהיר שמור');
+      return;
+    }
+    var parsed;
+    try{ parsed = JSON.parse(raw); } catch(e){ showToast('הגיבוי השמור פגום'); return; }
+    if (!parsed || !parsed.catalog){ showToast('הגיבוי השמור פגום'); return; }
+    var whenText = parsed.savedAt ? formatDateTime(parsed.savedAt) : '';
+    showConfirm(
+      'שחזור רשימה עדכנית',
+      'פעולה זו תחליף את כל המוצרים והרשימות הנוכחיים בגיבוי השמור' + (whenText ? (' מתאריך ' + whenText) : '') + '. להמשיך?',
+      'כן, שחזר',
+      async function(){
+        state.data = normalizeData(parsed);
+        state.finalUndoStack = [];
+        await saveShared();
+        renderAll();
+        showToast('הרשימה שוחזרה בהצלחה');
+      }
+    );
   }
 
   function normalizeData(data){
@@ -806,6 +865,9 @@
     }
     Object.keys(data.lists).forEach(function(id){
       if (!data.lists[id].selections) data.lists[id].selections = {};
+      // "new since" cutoff (shared, synced): items added after this time show a "new" badge for everyone.
+      // Set once on first load so pre-existing items are never retroactively flagged; advanced on "reset round".
+      if (!data.lists[id].newSince) data.lists[id].newSince = Date.now();
     });
     return data;
   }
@@ -1088,13 +1150,14 @@
       return;
     }
 
-    var baseline = state.finalListBaseline[state.activeListId] || {};
+    var activeListForNew = state.data.lists[state.activeListId];
+    var newSince = (activeListForNew && activeListForNew.newSince) || 0;
 
     function rowHtml(id){
       var sel = selections[id];
       var info = locateProduct(id);
       if (!info) return '';
-      var isNew = !baseline[id];
+      var isNew = !!(sel.addedAt && newSince && sel.addedAt > newSince);
       var hasPhoto = !!info.product.photo;
       return '<div class="final-row ' + (sel.taken ? 'taken' : '') + (isNew ? ' new-item' : '') + (hasPhoto ? ' has-photo' : '') + '" data-pid="' + id + '">' +
         '<button class="f-check" data-action="final-toggle" data-pid="' + id + '">' + iconCheck() + '</button>' +
@@ -1255,9 +1318,8 @@
 
   async function resetRound(){
     getActiveList().selections = {};
+    getActiveList().newSince = Date.now();
     state.finalUndoStack = state.finalUndoStack.filter(function(e){ return e.listId !== state.activeListId; });
-    delete state.finalListBaseline[state.activeListId];
-    await clearPersistedBaseline(state.activeListId);
     await saveShared();
     renderAll();
   }
@@ -1266,7 +1328,7 @@
     var trimmed = name.trim();
     if (!trimmed) return;
     var id = 'l_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,6);
-    state.data.lists[id] = { name: trimmed, special:true, createdBy: state.myName, createdAt: Date.now(), selections:{} };
+    state.data.lists[id] = { name: trimmed, special:true, createdBy: state.myName, createdAt: Date.now(), selections:{}, newSince: Date.now() };
     saveShared();
     state.activeListId = id;
     state.activeCat = CATS[0].key;
@@ -1286,8 +1348,6 @@
     if (id === WEEKLY_ID) return;
     var name = state.data.lists[id] ? state.data.lists[id].name : '';
     delete state.data.lists[id];
-    delete state.finalListBaseline[id];
-    clearPersistedBaseline(id);
     if (state.activeListId === id) state.activeListId = WEEKLY_ID;
     saveShared();
     renderSpecialLists();
@@ -1433,6 +1493,8 @@
       this.value = '';
       loadBackupFile(file);
     });
+    $('save-quick-btn').addEventListener('click', saveQuickSnapshot);
+    $('restore-quick-btn').addEventListener('click', restoreQuickSnapshot);
 
     $('photo-file-input').addEventListener('change', function(){
       var file = this.files && this.files[0];
@@ -1459,40 +1521,7 @@
     $('gate-go').addEventListener('click', enterApp);
   }
 
-  function baselineStorageKey(listId){ return 'super-keto-baseline-' + listId; }
-
-  async function loadPersistedBaseline(listId){
-    try{
-      var raw = localStorage.getItem(baselineStorageKey(listId));
-      if (!raw) return null;
-      var arr = JSON.parse(raw);
-      var obj = {};
-      arr.forEach(function(pid){ obj[pid] = true; });
-      return obj;
-    } catch(e){ return null; }
-  }
-
-  async function savePersistedBaseline(listId, baseline){
-    try{ localStorage.setItem(baselineStorageKey(listId), JSON.stringify(Object.keys(baseline))); } catch(e){}
-  }
-
-  async function clearPersistedBaseline(listId){
-    try{ localStorage.removeItem(baselineStorageKey(listId)); } catch(e){}
-  }
-
-  async function openModal(){
-    if (!state.finalListBaseline[state.activeListId]){
-      var persisted = await loadPersistedBaseline(state.activeListId);
-      var baseline;
-      if (persisted){
-        baseline = persisted;
-      } else {
-        baseline = {};
-        Object.keys(getActiveSelections()).forEach(function(pid){ baseline[pid] = true; });
-        await savePersistedBaseline(state.activeListId, baseline);
-      }
-      state.finalListBaseline[state.activeListId] = baseline;
-    }
+  function openModal(){
     renderModal();
     $('modal-backdrop').classList.add('open');
     $('modal').classList.add('open');
