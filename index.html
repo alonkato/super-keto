@@ -160,6 +160,9 @@
   .note-toggle svg{width:16px; height:16px;}
   .edit-btn{width:30px; height:30px; flex-shrink:0; color:var(--text-faint); display:flex; align-items:center; justify-content:center;}
   .edit-btn svg{width:15px; height:15px;}
+  .camera-btn{width:30px; height:30px; flex-shrink:0; color:var(--text-faint); display:flex; align-items:center; justify-content:center;}
+  .camera-btn svg{width:16px; height:16px;}
+  .camera-btn.has-photo{color:var(--accent);}
   .note-input-row{padding:0 14px 12px; margin-top:-8px;}
   .note-input-row input{
     width:100%; background:var(--bg-soft); border:1px solid var(--border); color:var(--text);
@@ -272,6 +275,38 @@
   .undo-btn svg{width:18px; height:18px;}
   .undo-btn:disabled{opacity:0.35;}
   @keyframes spin{to{transform:rotate(360deg);}}
+
+  .backup-row{display:flex; gap:10px; padding:0 20px 18px;}
+  .backup-btn{
+    flex:1; background:var(--card); color:var(--text-dim); font-weight:600; font-size:12.5px;
+    padding:10px; border-radius:10px; text-align:center; border:1px solid var(--border);
+  }
+  .f-photo-badge{
+    display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px;
+    color:var(--accent); margin-inline-start:6px; vertical-align:middle;
+  }
+  .f-photo-badge svg{width:14px; height:14px;}
+  .final-row.has-photo .f-info{cursor:pointer;}
+  .photo-lightbox{
+    position:fixed; inset:0; background:rgba(0,0,0,0.86); z-index:300; display:none;
+    align-items:center; justify-content:center; flex-direction:column; gap:18px; padding:24px;
+  }
+  .photo-lightbox.open{display:flex;}
+  .photo-lightbox img{max-width:92vw; max-height:70vh; border-radius:14px; object-fit:contain; background:#111;}
+  .photo-lightbox-actions{display:flex; gap:10px;}
+  .photo-lightbox-actions button{
+    padding:10px 18px; border-radius:12px; font-weight:600; font-size:13.5px;
+  }
+  .photo-lightbox-close{background:rgba(255,255,255,0.14); color:#fff;}
+  .photo-lightbox-remove{background:rgba(210,87,74,0.85); color:#fff;}
+  .edit-photo-section{margin:20px 0 4px;}
+  .edit-photo-preview{width:100%; max-height:160px; border-radius:12px; object-fit:cover; margin-bottom:10px; display:block;}
+  .edit-photo-actions{display:flex; gap:8px;}
+  .edit-photo-actions button{
+    flex:1; padding:10px; border-radius:10px; font-weight:600; font-size:13px; text-align:center;
+  }
+  .edit-photo-attach{background:var(--card); border:1px solid var(--border); color:var(--text-dim);}
+  .edit-photo-remove{background:rgba(210,87,74,0.10); color:#8A3226;}
 
   .confirm-backdrop{position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:110; display:none; align-items:center; justify-content:center; padding:24px;}
   .confirm-backdrop.open{display:flex;}
@@ -443,6 +478,11 @@
     <button class="reset-btn" id="reset-round-btn">איפוס רשימה זו</button>
     <button class="refresh-btn" id="refresh-btn"><svg viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
+  <div class="backup-row">
+    <button class="backup-btn" id="save-backup-btn">שמירת גיבוי</button>
+    <button class="backup-btn" id="load-backup-btn">טעינת גיבוי</button>
+  </div>
+  <input type="file" id="backup-file-input" accept="application/json" style="display:none">
 </div>
 
 <div class="modal-backdrop" id="special-modal-backdrop"></div>
@@ -484,11 +524,23 @@
     <div class="edit-current-cat" id="edit-current-cat"></div>
     <div class="edit-cat-chips" id="edit-category-chips"></div>
 
+    <div class="edit-section-title">תמונה</div>
+    <div class="edit-photo-section" id="edit-photo-section"></div>
+
     <button class="edit-delete-btn" id="edit-delete-btn">מחיקת המוצר מכל הרשימות</button>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
+
+<input type="file" id="photo-file-input" accept="image/*" capture="environment" style="display:none">
+<div class="photo-lightbox" id="photo-lightbox">
+  <img id="photo-lightbox-img" src="" alt="תמונת מוצר">
+  <div class="photo-lightbox-actions">
+    <button class="photo-lightbox-close" id="photo-lightbox-close">סגירה</button>
+    <button class="photo-lightbox-remove" id="photo-lightbox-remove">הסרת תמונה</button>
+  </div>
+</div>
 
 <div class="confirm-backdrop" id="confirm-backdrop">
   <div class="confirm-box">
@@ -559,7 +611,8 @@
     editingProduct: null, // {id, catKey}
     pendingConfirmAction: null,
     finalUndoStack: [],
-    finalListBaseline: {} // listId -> {pid: true, ...} — items seen since baseline was captured
+    finalListBaseline: {}, // listId -> {pid: true, ...} — items seen since baseline was captured
+    pendingPhotoTarget: null
   };
 
   function getActiveList(){
@@ -618,6 +671,126 @@
       }
     }
     return null;
+  }
+
+  // ---------- product photos ----------
+  function compressImage(file, maxDim, quality){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onload = function(e){
+        var img = new Image();
+        img.onload = function(){
+          var w = img.width, h = img.height;
+          var scale = Math.min(1, maxDim / Math.max(w, h));
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(w * scale));
+          canvas.height = Math.max(1, Math.round(h * scale));
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function openPhotoPicker(pid){
+    state.pendingPhotoTarget = pid;
+    $('photo-file-input').click();
+  }
+
+  async function attachPickedPhoto(file){
+    var pid = state.pendingPhotoTarget;
+    state.pendingPhotoTarget = null;
+    if (!file || !pid) return;
+    try{
+      var dataUri = await compressImage(file, 480, 0.62);
+      var loc = locateProduct(pid);
+      if (loc){
+        loc.product.photo = dataUri;
+        await saveShared();
+        renderAll();
+        if ($('edit-modal').classList.contains('open')) renderEditModal();
+        showToast('התמונה נשמרה');
+      }
+    } catch(e){
+      console.error(e);
+      showToast('לא הצלחנו לעבד את התמונה');
+    }
+  }
+
+  function removePhotoFromProduct(pid){
+    var loc = locateProduct(pid);
+    if (!loc || !loc.product.photo) return;
+    delete loc.product.photo;
+    saveShared();
+    renderAll();
+    if ($('edit-modal').classList.contains('open')) renderEditModal();
+    closeLightbox();
+    showToast('התמונה הוסרה');
+  }
+
+  function openLightbox(pid){
+    var loc = locateProduct(pid);
+    if (!loc || !loc.product.photo) return;
+    $('photo-lightbox-img').src = loc.product.photo;
+    $('photo-lightbox-remove').setAttribute('data-pid', pid);
+    $('photo-lightbox').classList.add('open');
+  }
+  function closeLightbox(){
+    $('photo-lightbox').classList.remove('open');
+    $('photo-lightbox-img').src = '';
+  }
+
+  // ---------- backup / restore ----------
+  function saveBackup(){
+    try{
+      var payload = JSON.stringify({ catalog: state.data.catalog, lists: state.data.lists, exportedAt: Date.now() }, null, 2);
+      var blob = new Blob([payload], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      var ts = new Date().toISOString().slice(0,10);
+      a.href = url;
+      a.download = 'super-kalman-backup-' + ts + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+      showToast('הגיבוי הורד בהצלחה');
+    } catch(e){
+      console.error(e);
+      showToast('לא הצלחנו ליצור את הגיבוי');
+    }
+  }
+
+  function loadBackupFile(file){
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e){
+      var parsed;
+      try{ parsed = JSON.parse(e.target.result); } catch(err){ showToast('קובץ לא תקין'); return; }
+      if (!parsed || typeof parsed !== 'object' || !parsed.catalog){
+        showToast('קובץ הגיבוי לא בפורמט הנכון');
+        return;
+      }
+      showConfirm(
+        'שחזור גיבוי',
+        'פעולה זו תחליף את כל המוצרים והרשימות הנוכחיים בנתונים מהקובץ. להמשיך?',
+        'כן, שחזר',
+        async function(){
+          state.data = normalizeData(parsed);
+          state.finalUndoStack = [];
+          state.finalListBaseline = {};
+          await saveShared();
+          renderAll();
+          showToast('הנתונים שוחזרו בהצלחה');
+        }
+      );
+    };
+    reader.readAsText(file);
   }
 
   function normalizeData(data){
@@ -717,6 +890,7 @@
   function iconTrash(){ return svgWrap('<path d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'); }
   function iconEdit(){ return svgWrap('<path d="M4 20l1-4.2L15.6 5.2a1.5 1.5 0 0 1 2.1 0l1.1 1.1a1.5 1.5 0 0 1 0 2.1L8.2 19l-4.2 1z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>'); }
   function iconSearch(){ return svgWrap('<circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'); }
+  function iconCamera(){ return svgWrap('<path d="M4 8h3l1.5-2h7l1.5 2h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="14" r="3.4" stroke="currentColor" stroke-width="1.6"/>'); }
 
   // ---------- render ----------
   var $ = function(id){ return document.getElementById(id); };
@@ -857,6 +1031,7 @@
             '<button data-action="inc" data-pid="' + p.id + '">+</button>' +
           '</div>'
         ) : '') +
+        '<button class="camera-btn ' + (p.photo ? 'has-photo' : '') + '" data-action="camera" data-pid="' + p.id + '">' + iconCamera() + '</button>' +
         '<button class="edit-btn" data-action="edit" data-pid="' + p.id + '">' + iconEdit() + '</button>' +
         '</div>';
       if (selected && noteOpen){
@@ -920,11 +1095,13 @@
       var info = locateProduct(id);
       if (!info) return '';
       var isNew = !baseline[id];
-      return '<div class="final-row ' + (sel.taken ? 'taken' : '') + (isNew ? ' new-item' : '') + '" data-pid="' + id + '">' +
+      var hasPhoto = !!info.product.photo;
+      return '<div class="final-row ' + (sel.taken ? 'taken' : '') + (isNew ? ' new-item' : '') + (hasPhoto ? ' has-photo' : '') + '" data-pid="' + id + '">' +
         '<button class="f-check" data-action="final-toggle" data-pid="' + id + '">' + iconCheck() + '</button>' +
-        '<div class="f-info">' +
+        '<div class="f-info" ' + (hasPhoto ? 'data-action="view-photo" data-pid="' + id + '"' : '') + '>' +
           '<div class="f-name">' + escapeHtml(info.product.name) +
             (isNew ? '<span class="f-new-tag">חדש</span>' : '') +
+            (hasPhoto ? '<span class="f-photo-badge">' + iconCamera() + '</span>' : '') +
           '</div>' +
           '<div class="f-meta">' +
             '<span>' + escapeHtml(sel.addedBy || '?') + '</span>' +
@@ -1143,6 +1320,7 @@
       else if (action === 'inc') changeQty(pid, 1);
       else if (action === 'dec') changeQty(pid, -1);
       else if (action === 'edit'){ openEditProduct(pid, state.activeCat); }
+      else if (action === 'camera'){ openPhotoPicker(pid); }
       else if (action === 'note-toggle'){
         state.noteOpenId = state.noteOpenId === pid ? null : pid;
         renderCategory();
@@ -1218,9 +1396,10 @@
     $('edit-delete-btn').addEventListener('click', deleteProductAction);
 
     $('modal-body').addEventListener('click', function(e){
-      var btn = e.target.closest('[data-action="final-toggle"]');
-      if (!btn) return;
-      toggleFinal(btn.getAttribute('data-pid'));
+      var toggleBtn = e.target.closest('[data-action="final-toggle"]');
+      if (toggleBtn){ toggleFinal(toggleBtn.getAttribute('data-pid')); return; }
+      var photoEl = e.target.closest('[data-action="view-photo"]');
+      if (photoEl){ openLightbox(photoEl.getAttribute('data-pid')); }
     });
 
     $('reset-round-btn').addEventListener('click', function(){
@@ -1245,6 +1424,26 @@
       await loadShared();
       renderAll();
       setTimeout(function(){ btn.classList.remove('spinning'); }, 400);
+    });
+
+    $('save-backup-btn').addEventListener('click', saveBackup);
+    $('load-backup-btn').addEventListener('click', function(){ $('backup-file-input').click(); });
+    $('backup-file-input').addEventListener('change', function(){
+      var file = this.files && this.files[0];
+      this.value = '';
+      loadBackupFile(file);
+    });
+
+    $('photo-file-input').addEventListener('change', function(){
+      var file = this.files && this.files[0];
+      this.value = '';
+      attachPickedPhoto(file);
+    });
+    $('photo-lightbox-close').addEventListener('click', closeLightbox);
+    $('photo-lightbox').addEventListener('click', function(e){ if (e.target === this) closeLightbox(); });
+    $('photo-lightbox-remove').addEventListener('click', function(){
+      var pid = this.getAttribute('data-pid');
+      if (pid) removePhotoFromProduct(pid);
     });
 
     $('me-badge').addEventListener('click', openRenameModal);
@@ -1369,6 +1568,17 @@
       return '<button class="chip" data-move-cat="' + c.key + '">' + c.icon() + '<span>' + c.name + '</span></button>';
     }).join('');
     $('edit-category-chips').innerHTML = chipsHtml;
+
+    var photoSection = $('edit-photo-section');
+    photoSection.innerHTML =
+      (loc.product.photo ? '<img class="edit-photo-preview" src="' + loc.product.photo + '" alt="תמונת מוצר">' : '') +
+      '<div class="edit-photo-actions">' +
+        '<button class="edit-photo-attach" id="edit-photo-attach-btn">' + (loc.product.photo ? 'החלפת תמונה' : 'צירוף תמונה') + '</button>' +
+        (loc.product.photo ? '<button class="edit-photo-remove" id="edit-photo-remove-btn">הסרת תמונה</button>' : '') +
+      '</div>';
+    $('edit-photo-attach-btn').addEventListener('click', function(){ openPhotoPicker(ep.id); });
+    var removeBtn = document.getElementById('edit-photo-remove-btn');
+    if (removeBtn) removeBtn.addEventListener('click', function(){ removePhotoFromProduct(ep.id); });
   }
 
   function renderEditDupWarning(existingCategoryKey, name){
